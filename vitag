@@ -1,0 +1,550 @@
+#!/usr/bin/env ruby
+# encoding: utf-8
+=begin
+_  _ _ ___ ____ ____
+|  | |  |  |__| | __
+ \/  |  |  |  | |__]
+
+vitag v1.0.0, copyright Brett Terpstra 2015
+
+A script for Mac OS X (10.9+) that reads files and folder paths and their
+current tags into a text document, opens it in an editor, and applies any tag
+changes when the file is saved and closed.
+
+Use `vitag -h` for options
+
+MIT license
+=end
+
+require 'tempfile'
+require 'optparse'
+require 'shellwords'
+require 'fileutils'
+
+def class_exists?(class_name)
+  klass = Module.const_get(class_name)
+  return klass.is_a?(Class)
+rescue NameError
+  return false
+end
+
+if class_exists? 'Encoding'
+  Encoding.default_external = Encoding::UTF_8 if Encoding.respond_to?('default_external')
+  Encoding.default_internal = Encoding::UTF_8 if Encoding.respond_to?('default_internal')
+end
+
+module Tagger
+
+  module StandardException
+    def exit_code; 1; end
+  end
+
+  class BadCommandLine < StandardError
+    include StandardException
+    def exit_code; 64; end
+  end
+
+  class CommandException < BadCommandLine
+
+    def initialize(message,exit_code=nil)
+      super(message)
+      @exit_code = exit_code
+    end
+
+    def exit_code
+      @exit_code || super
+    end
+  end
+
+  class SystemError < StandardError
+    include StandardException
+    def exit_code; 120; end
+  end
+
+  class AttributeWriteException < SystemError; end
+  class AttributeReadException < SystemError; end
+end
+
+
+class String
+  include Tagger
+  def is_color?
+    Color::COLOR_TABLE.key?(self.capitalize)
+  end
+  alias_method :color?, :is_color?
+end
+
+
+module Tagger
+  class Color
+    COLOR_TABLE = {
+      "Clear"  =>  "01",
+      "Gray"   =>  "03",
+      "Green"  =>  "04",
+      "Purple" =>  "06",
+      "Blue"   =>  "09",
+      "Yellow" =>  "0A",
+      "Red"    =>  "0C",
+      "Orange" =>  "0E"
+    }
+
+    def self.name
+      'Color'
+    end
+
+    attr_reader :title
+
+    def initialize(title)
+      if title.is_color?
+        @title = title.capitalize
+      else
+        raise InvalidColorNameException
+      end
+    end
+
+    def to_hex
+      COLOR_TABLE[@title.capitalize]
+    end
+
+    def inspect
+      "Color: #{@title} (#{COLOR_TABLE[@title.capitalize]})"
+    end
+
+    def to_s
+      @title
+    end
+
+    def is_a?(klass)
+      klass == Color || super
+    end
+    alias_method :kind_of?, :is_a?
+  end
+end
+
+module Tagger
+  class Tag
+    def self.name
+      'Tag'
+    end
+
+    attr_reader :title
+
+    def initialize(title)
+      @title = title
+    end
+
+    def inspect
+      "Tag: #{@title}"
+    end
+
+    def to_s
+      @title
+    end
+
+    def is_a?(klass)
+      klass == Tag || super
+    end
+    alias_method :kind_of?, :is_a?
+  end
+end
+
+module Tagger
+  class FileTagger
+
+    attr_accessor :path, :tags
+
+    def initialize(file)
+      @path = File.expand_path(file)
+      @tags = []
+      get_tags
+    end
+
+    def tags_eq(arr)
+      ok = 0
+      test_arr = arr.dup
+      titles = @tags.map {|t| t.title }
+      test_arr.delete_if {|tag|
+        if titles.include?(tag)
+          ok += 1
+          true
+        else
+          false
+        end
+      }
+
+      ok == titles.length && test_arr.length == 0
+    end
+
+    def tags_to_s(sep=", ")
+      begin
+        @tags.map {|t| t.to_s }.join(sep)
+      rescue
+        ""
+      end
+    end
+
+    def inspect
+      begin
+        "path: #{@path}, tags:[#{@tags.map {|t| t.inspect }.join(", ")}]"
+      rescue
+        ""
+      end
+    end
+
+    def tags=(tags)
+      set_tags(tags)
+    end
+
+    # Check whether tags on file contain "tag" or ["tag", "tag2"]
+    # Arrays processed as boolean AND
+    def tags_include? (tag)
+      if tag.class == String
+        @tags.include? tag
+      elsif tag.class == Array
+        ret_value = true
+        tag.each {|t|
+          ret_value = false unless @tags.include? t
+        }
+        ret_value
+      end
+    end
+
+    # Check whether tags on file contain "tag" or ["tag", "tag2"]
+    # Arrays processed as boolean OR
+    def tags_include_any? (tag)
+      if tag.class == Array
+        ret_value = false
+        tag.each {|t|
+          return true if @tags.include? t
+        }
+        ret_value
+      else
+        @tags.include? tag
+      end
+    end
+
+    # Removes tags from existing tags on file
+    # tag can be a single tag (String) or a list of tags (Array of Strings)
+    def remove_tags (tag)
+      return false if @tags.empty?
+      tags = @tags
+
+      if tag.is_a? String
+        tags.delete_if {|atag| atag == tag }
+      elsif tag.is_a? Array
+        tags.delete_if {|atag| tag.include? atag }
+      else
+        return false
+      end
+
+      set_tags(tags)
+    end
+
+    # Adds tags in tags_array to existing tags on file
+    # tags_array can be a String or Array
+    def add_tags (tags_array)
+
+      if tags_array.is_a? String
+        tags_array = [tags_array]
+      end
+
+      old_tags = @tags
+      new_tags = old_tags + tags_array
+      new_tags.uniq!
+      set_tags(new_tags)
+    end
+
+    # Removing a color tag doesn't uncolor it in the Finder. You have to clear the com.apple.FinderInfo attribute.
+    # Doing so will remove all colors visible in Finder, but I can't find a way to do it selectively.
+    def clear_colors
+      begin
+        %x{xattr -d com.apple.FinderInfo #{Shellwords.escape(@path)} &> /dev/null }
+      rescue
+        return false
+      end
+    end
+
+    # This will replace any existing color label
+    # color is a string found in translate_color
+    def set_color(color)
+      color_num = Color.new(color.capitalize).to_hex
+      new_color = "000000000000000000#{color_num}00000000000000000000000000000000000000000000"
+      begin
+        %x{xattr -wx com.apple.FinderInfo "#{new_color}" #{Shellwords.escape(@path)}}
+      rescue
+        raise AttributeWriteException
+      end
+    end
+
+    private
+
+    # Retrieve the kMDItemUserTags (Mavericks) on a file
+    def get_tags
+      begin
+        raw_tags = %x{mdls -raw -name kMDItemUserTags #{Shellwords.escape(@path)}}
+      rescue => e
+        p e
+        puts e.backtrace
+        raise AttributeReadException.new("Error getting tags")
+      end
+
+      if raw_tags.strip == "(null)"
+        @tags = []
+      else
+        tags_array = raw_tags.gsub(/^[\(\)]\s*$/m, "").gsub(/,$/m, "").split("\n")
+        tags_array.map! {|tag| tag.strip }.delete_if {|tag| tag =~ /^\s*$/ }
+
+        tags_array.map! {|tag|
+          tag.is_color? ? Color.new(tag) : Tag.new(tag)
+        }
+
+        @tags = tags_array
+      end
+    end
+
+    # sets tags of file to tags_array (Array), replacing existing tags
+    # send an empty array to remove all tags
+    def set_tags (tags_array)
+
+      if tags_array.is_a? String
+        tags_array = [tags_array]
+      end
+
+      tags_array.map! {|tag|
+        tag.strip!
+        tag.is_color? ? Color.new(tag) : Tag.new(tag)
+      }
+
+      begin
+        clear_colors
+        tags_xml = []
+        tags_array.each {|tag|
+          set_color(tag.title.strip) if tag.is_a? Color
+          tags_xml.push("<string>#{tag.title}</string>")
+        }
+        %x{xattr -w com.apple.metadata:_kMDItemUserTags '<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd"><plist version="1.0"><array>#{tags_xml.join()}</array></plist>' #{Shellwords.escape(@path)}}
+        @tags = tags_array
+      rescue => e
+        p e
+        puts e.backtrace
+        raise AttributeWriteException
+      end
+
+    end
+
+  end
+end
+
+module Tagger
+  class DirectoryTagger
+
+    attr_reader :files
+
+    def initialize(path, options={})
+      raise CommandException.new("Invalid path specified (#{path})",1) unless File.exists?(path) && File.directory?(path)
+      options[:depth] ||= 0
+      options[:filter] ||= "*"
+      if options[:filter] =~ /[a-z]/i && options[:nocase]
+        options[:filter] = options[:filter].split('').map {|x| x =~ /[a-z]/i ? "[#{x}#{x.swapcase}]" : x }.join('')
+      end
+
+      pattern = File.expand_path(path)
+
+      options[:depth].times do
+        pattern = File.join(pattern, "**")
+      end
+      pattern = File.join(pattern, options[:filter])
+
+      get_files(pattern)
+
+    end
+
+    def file_for_path(path)
+      @files.each do |file|
+        if file.path =~ /#{Regexp.escape(path)}/
+          return file
+        end
+      end
+      return false
+    end
+
+    def get_files(pattern)
+      @files = []
+      ls = Dir.glob(pattern)
+      ls.select {|f| (File.file?(f) || File.directory?(f)) && File.readable_real?(f) }.each do |f|
+        @files.push(FileTagger.new(f))
+      end
+    end
+
+    def to_vidir
+      output = []
+      basedir = Dir.pwd + "/"
+      @files.map do |f|
+        output.push("#{f.path.sub(/^#{basedir}/,'')} [#{f.tags.map{|t| t.to_s }.join(', ')}]")
+      end
+      output.join("\n")
+    end
+
+    def inspect
+      @files.map do |f|
+        tags = f.tags.map {|t| t.inspect } || []
+        "path: #{f.path}, tags: #{tags.join(',')}"
+      end
+    end
+
+  end
+end
+
+class ViDir
+  include Tagger
+  attr_reader :tagger
+  attr_accessor :debug
+
+  def initialize(args)
+    @options = {}
+    optparse = OptionParser.new do|opts|
+      opts.banner = "Usage: vitag [options] path"
+
+      @options[:depth] = 0
+      opts.on( '-d', '--depth DEPTH', 'Level of nested directories to include (default 0, current only)' ) do|depth|
+        @options[:depth] = depth.to_i
+      end
+
+      @options[:filter] = "*"
+      opts.on( '-f', '--filter GLOB_PATTERN', 'Only modify files matching GLOB_PATTERN (case insensitive)' ) do |pattern|
+        @options[:filter] = pattern
+      end
+
+      @options[:nocase] = true
+      opts.on( '-I', 'When used with -f, make case sensitive' ) do
+        @options[:nocase] = false
+      end
+
+      @options[:editor] = nil
+      opts.on( '-e', '--editor EDITOR', 'Force editor to use (default $EDITOR)' ) do|editor|
+        @options[:editor] = editor
+      end
+
+      @debug = 0
+      opts.on( '-v', '--verbose LEVEL', 'Level of debug messages to output' ) do|level|
+        @debug = level.to_i
+      end
+
+      opts.on( '-h', '--help', 'Display this screen' ) do
+        puts opts
+        exit
+      end
+    end
+
+    optparse.parse!
+
+    if args.length > 0
+      path = File.expand_path(args[0])
+    else
+      path = File.expand_path(".")
+    end
+
+    @editor = find_editor
+    @tagger = Tagger::DirectoryTagger.new(path, @options)
+  end
+
+  def run
+    content = @tagger.to_vidir
+
+    scratchfile = File.expand_path(".vitag.#{rand(10000)}")
+    File.open(scratchfile,'w+') do |f|
+      f.puts content
+    end
+
+    results = []
+    begin
+      new_content = fork_editor(scratchfile)
+      # puts ["Content size: #{content.strip.length}","Modified content size: #{new_content.strip.length}"] if @debug > 0
+
+      results = process_diff(content.strip,new_content.strip)
+    rescue => e
+      p e
+      puts e.backtrace
+      raise "Error reading scratch file"
+    ensure
+      FileUtils.rm(scratchfile) if File.exists?(scratchfile)
+    end
+
+    if results.empty?
+      $stderr.puts "No changes detected"
+    else
+      $stderr.puts results.join("\n") if @debug > 0
+    end
+    Process.exit 0
+  end
+
+  def process_diff(initial,modified)
+    return [] if initial == modified
+    results = []
+
+    modified.each_line do |line|
+      if line =~ /^(\S.*) +\[(.*?)\] *$/
+        path = $1
+        new_tags = $2.split(/,/).map {|t| t.strip }
+
+        ft = @tagger.file_for_path(path)
+
+        # $stderr.puts "#{ft.path}: #{ft.tags.join(',')} -> #{new_tags.join(',')}" if @debug > 2
+
+        if ft && File.exists?(File.expand_path(ft.path))
+          unless ft.tags_eq(new_tags)
+            $stderr.puts "#{ft.path} before: #{ft.tags}" if @debug > 1
+            ft.tags = new_tags
+            $stderr.puts "#{ft.path} now: #{ft.tags}" if @debug > 1
+            results.push("Modified #{path} [#{ft.tags.map{|t| t.title }.join(", ")}]")
+          end
+        end
+      end
+
+      # $stderr.puts "File matched: " + original_files.key?(path).to_s if @debug > 2
+      # $stderr.puts "File exists: " + File.exists?(File.expand_path(path)).to_s if @debug > 2
+    end
+    results
+  end
+
+
+  def find_editor
+    vi = nil
+    editors = @options[:editor].nil? ? [] : [@options[:editor]]
+    editors += [ENV['EDITOR'],"vim","vi"]
+    editors.each do |e|
+      `type -t #{e}`
+      if $CHILD_STATUS.to_i == 0
+        vi = e
+        $stderr.puts "Using #{vi}" if @debug > 1
+        break
+      end
+    end
+    raise Tagger::CommandException.new("No executable for vim or vi found in PATH") if vi.nil?
+    vi
+  end
+
+  def fork_editor(tmpfile)
+
+    pid = Process.fork { system("#{@editor} #{Shellwords.escape(tmpfile)}") }
+
+    trap("INT") {
+      Process.kill(9, pid) rescue Errno::ESRCH
+      FileUtils.rm(tmpfile) if File.exists?(tmpfile)
+      exit 1
+    }
+
+    Process.wait(pid)
+
+    unless $?.exitstatus == 0
+      puts "Canceled"
+      Process.exit 1
+    end
+    return IO.read(tmpfile)
+  end
+end
+
+
+app = ViDir.new(ARGV)
+
+app.run
