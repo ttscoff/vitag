@@ -1,6 +1,6 @@
 ## vitag
 
-A script for Mac OS X (10.9+) that reads files and folder paths and their current tags into a text document, opens it in an editor, and applies any tag changes when the file is saved and closed.
+Vitag is a script for Mac OS X (10.9+) that reads files and folder paths and their current tags into a text document, opens it in an editor, and applies any tag changes when the file is saved and closed.
 
 ### Installation
 
@@ -12,12 +12,19 @@ Copy `vitag` into a folder in your path and make it executable (`chmod ug+x vita
 
 `vitag [options] [path]`
 
-A list of files with their current tags following the path in square brackets will open in your editor. 
+A list of files, with their current tags in square brackets following the path, will open in your editor. 
 
-1. Modify the content between the square brackets with a comma-separated list (leading/trailing whitespace ignored). 
+1. Modify the content between the square brackets using a comma-separated list 
 2. Save and close the file
 
 That's it. A little text editor magic with search and replace can make batch file/folder tagging with conditional filters a breeze.
+
+**Additional Usage Notes**:
+
+- **leading/trailing whitespace is ignored**, so `[one,two,three` is the same as `[one, two, three]`. 
+- Space between words is preserved, **no quotes needed for multi-word tags.** The tag ends at the next comma or end of the bracket pair.
+- **Changes are be mirrored in their entirety.** If you remove a tag, it will be removed from the file, change the tag, the file's tag changes, and so on.
+- Tags that are recognized **Finder Label colors** will additionally have their attribute data for display color changed to that color, clearing existing colors. Deleting a color tag from the list will clear the color in Finder. _This currently only works with the default color names, not customized labels._
 
 ### Options
 
