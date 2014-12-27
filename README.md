@@ -1,5 +1,7 @@
 ## vitag
 
+![](https://raw.githubusercontent.com/ttscoff/vitag/master/vitaglogo.png)
+
 Vitag is a script for Mac OS X (10.9+) that reads files and folder paths and their current tags into a text document, opens it in an editor, and applies any tag changes when the file is saved and closed.
 
 ### Installation
