@@ -23,7 +23,7 @@ That's it. A little text editor magic with search and replace can make batch fil
 
 **Additional Usage Notes**:
 
-- **leading/trailing whitespace is ignored**, so `[one,two,three` is the same as `[one, two, three]`. 
+- **leading/trailing whitespace is ignored**, so `[one,two,three]` is the same as `[one, two, three]`. 
 - Space between words is preserved, **no quotes needed for multi-word tags.** The tag ends at the next comma or end of the bracket pair.
 - **Changes are be mirrored in their entirety.** If you remove a tag, it will be removed from the file, change the tag, the file's tag changes, and so on.
 - Tags that are recognized **Finder Label colors** will additionally have their attribute data for display color changed to that color, clearing existing colors. Deleting a color tag from the list will clear the color in Finder. _This currently only works with the default color names, not customized labels._
