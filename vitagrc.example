@@ -1,0 +1,9 @@
+[alias]
+// double slash lines are comments
+	xx = #X#
+	#ar = #Archive
+	#pr = #Projects
+	#co = #Code
+	#fc = #FileCabinet
+	#st = #Stock
+	:mt=#Projects, :marked:testfile

@@ -34,6 +34,69 @@ if class_exists? 'Encoding'
 end
 
 module Tagger
+  class Config
+    attr_accessor :config
+
+    def initialize(file=nil)
+      @config = read_config(file)
+    end
+
+    def config
+      if @config.nil?
+        @config = read_config
+      end
+      return @config
+    end
+
+    def read_config(file=nil)
+      file ||= '.vitagrc'
+
+      if Dir.respond_to?('home')
+        config_path = File.join(Dir.home, file)
+      else
+        config_path = File.join(File.expand_path("~"), file)
+      end
+
+      unless File.exists?(config_path) && File.stat(config_path).size > 0
+        File.open(config_path,'a') do |f|
+          f.puts "# vitag configuration\n"
+          f.puts "[aliases]"
+        end
+        $stderr.puts "Config file didn't exist at standard location. Created #{config_path}"
+        $stderr.puts "You can use this file to edit tag aliases and other options if desired."
+      end
+
+      begin
+        config_lines = IO.read(config_path).split(/\n/).delete_if {|l| l =~ /^\s*\/\// }
+        config = parse_config(config_lines)
+      rescue => e
+        # p e
+        # puts e.backtrace
+        # raise "Error reading config file"
+        config = {}
+      end
+
+      config
+    end
+
+    def parse_config(lines)
+      section = nil
+      config = {}
+      lines.each do |l|
+        if l =~ /\[([\w ]+)\]/
+          section = $1
+          config[section] = {}
+        elsif l =~ /^\s*?(\S.*?)\s*=\s*(\S.*)\s*$/
+          next if section.nil?
+          config[section][$1] = $2
+        end
+      end
+      config
+    end
+  end
+end
+
+module Tagger
 
   module StandardException
     def exit_code; 1; end
@@ -150,7 +213,6 @@ end
 
 module Tagger
   class FileTagger
-
     attr_accessor :path, :tags
 
     def initialize(file)
@@ -310,8 +372,7 @@ module Tagger
         tags_array = [tags_array]
       end
 
-      tags_array.map! {|tag|
-        tag.strip!
+      tags_array.delete_if{|t| t.nil?}.map! {|tag|
         tag.is_color? ? Color.new(tag) : Tag.new(tag)
       }
 
@@ -354,7 +415,6 @@ module Tagger
         pattern = File.join(pattern, "**")
       end
       pattern = File.join(pattern, options[:filter])
-
       get_files(pattern)
 
     end
@@ -397,8 +457,9 @@ end
 
 class ViDir
   include Tagger
+
   attr_reader :tagger
-  attr_accessor :debug
+  attr_accessor :debug, :config
 
   def initialize(args)
     @options = {}
@@ -430,6 +491,11 @@ class ViDir
         @debug = level.to_i
       end
 
+      @force_update = false
+      opts.on('--force', 'Force tags to be set/refreshed even if they don\'t appear to have changed' ) do
+        @force_update = true
+      end
+
       opts.on( '-h', '--help', 'Display this screen' ) do
         puts opts
         exit
@@ -444,8 +510,12 @@ class ViDir
       path = File.expand_path(".")
     end
 
+    config = Tagger::Config.new.config
+    @aliases = config.has_key?('alias') ? config['alias'] : {}
+
     @editor = find_editor
     @tagger = Tagger::DirectoryTagger.new(path, @options)
+
   end
 
   def run
@@ -479,20 +549,21 @@ class ViDir
   end
 
   def process_diff(initial,modified)
-    return [] if initial == modified
+    return [] if initial == modified && !@force_update
     results = []
 
     modified.each_line do |line|
       if line =~ /^(\S.*) +\[(.*?)\] *$/
         path = $1
         new_tags = $2.split(/,/).map {|t| t.strip }
+        new_tags.map! {|tag| @aliases.keys.include?(tag) ? @aliases[tag].split(/\s*,\s*/) : tag }.flatten!
 
         ft = @tagger.file_for_path(path)
 
         # $stderr.puts "#{ft.path}: #{ft.tags.join(',')} -> #{new_tags.join(',')}" if @debug > 2
 
         if ft && File.exists?(File.expand_path(ft.path))
-          unless ft.tags_eq(new_tags)
+          unless ft.tags_eq(new_tags) && !@force_update
             $stderr.puts "#{ft.path} before: #{ft.tags}" if @debug > 1
             ft.tags = new_tags
             $stderr.puts "#{ft.path} now: #{ft.tags}" if @debug > 1
