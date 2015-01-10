@@ -5,7 +5,7 @@ _  _ _ ___ ____ ____
 |  | |  |  |__| | __
  \/  |  |  |  | |__]
 
-vitag v1.0.0, copyright Brett Terpstra 2015
+vitag v1.0.2, copyright Brett Terpstra 2015
 
 A script for Mac OS X (10.9+) that reads files and folder paths and their
 current tags into a text document, opens it in an editor, and applies any tag
@@ -436,7 +436,7 @@ module Tagger
       end
     end
 
-    def to_vidir
+    def to_tagdir
       output = []
       basedir = Dir.pwd + "/"
       @files.map do |f|
@@ -455,7 +455,7 @@ module Tagger
   end
 end
 
-class ViDir
+class ViTagger
   include Tagger
 
   attr_reader :tagger
@@ -463,11 +463,11 @@ class ViDir
 
   def initialize(args)
     @options = {}
-    optparse = OptionParser.new do|opts|
+    optparse = OptionParser.new do |opts|
       opts.banner = "Usage: vitag [options] path"
 
       @options[:depth] = 0
-      opts.on( '-d', '--depth DEPTH', 'Level of nested directories to include (default 0, current only)' ) do|depth|
+      opts.on( '-d', '--depth DEPTH', 'Level of nested directories to include (default 0, current only)' ) do |depth|
         @options[:depth] = depth.to_i
       end
 
@@ -482,12 +482,12 @@ class ViDir
       end
 
       @options[:editor] = nil
-      opts.on( '-e', '--editor EDITOR', 'Force editor to use (default $EDITOR)' ) do|editor|
+      opts.on( '-e', '--editor EDITOR', 'Force editor to use (default $EDITOR)' ) do |editor|
         @options[:editor] = editor
       end
 
       @debug = 0
-      opts.on( '-v', '--verbose LEVEL', 'Level of debug messages to output' ) do|level|
+      opts.on( '-v', '--verbose LEVEL', 'Level of debug messages to output' ) do |level|
         @debug = level.to_i
       end
 
@@ -519,7 +519,7 @@ class ViDir
   end
 
   def run
-    content = @tagger.to_vidir
+    content = @tagger.to_tagdir
 
     scratchfile = File.expand_path(".vitag.#{rand(10000)}")
     File.open(scratchfile,'w+') do |f|
@@ -616,6 +616,6 @@ class ViDir
 end
 
 
-app = ViDir.new(ARGV)
+app = ViTagger.new(ARGV)
 
 app.run

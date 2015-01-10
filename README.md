@@ -28,6 +28,17 @@ That's it. A little text editor magic with search and replace can make batch fil
 - **Changes are be mirrored in their entirety.** If you remove a tag, it will be removed from the file, change the tag, the file's tag changes, and so on.
 - Tags that are recognized **Finder Label colors** will additionally have their attribute data for display color changed to that color, clearing existing colors. Deleting a color tag from the list will clear the color in Finder. _This currently only works with the default color names, not customized labels._
 
+### Configuration
+
+A config file can be placed at `~/.vitagrc`. It currently supports one section called 'alias'. Example:
+
+    [alias]
+    // double slash lines are comments
+    xx = #X#
+    #ar = #Archive
+
+Formatting is loose; indentation is ignored, whitespace around separators (`=` and `,`) is ignored, lines starting with `//` (after any indentation) are ignored. Anything before the `=` is an shorcut term, anything after are the tag(s) that are applied when the shortcut is found after saving a vitag file.
+
 ### Options
 
     -d, --depth DEPTH          Level of nested directories to include (default 0, current only)
@@ -71,3 +82,5 @@ When I save and close, my tags will be:
     nvremindapp                     @nvremindapp,cocoa
 
 By the way, if you're tagging on the command line, don't do it without [tag](https://github.com/jdberry/tag) (available through homebrew, `brew install tag`). This script would be a lot faster if I used `tag` or an Obj-C implementation directly instead of looping through `mdls` and `xargs` calls, but I didn't want to add dependencies off the bat. I may add the option if it starts frustrating me.
+
+
